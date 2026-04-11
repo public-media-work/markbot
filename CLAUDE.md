@@ -27,6 +27,7 @@ Single-file CLI (`markbot.py`) that owns all Slack notifications for Wonder Cabi
 | `transcribe-start` | "Job started" notification | `wc-transcribe` skill |
 | `transcribe-ready` | "Transcript ready" with Google Doc link | `wc-transcribe` skill |
 | `schedule-alert` | Release readiness alerts (missing/drafted/scheduled) | Airtable automations |
+| `ghost-import` | Import lifecycle notifications (start/draft/scheduled/failed) | `prx-to-ghost-publisher` |
 | `post` | Generic Block Kit poster | Any caller with custom blocks |
 
 ## Usage
@@ -41,6 +42,20 @@ markbot.py transcribe-ready --episode "007 - ..." --doc-url URL --channel C --th
 # Schedule alerts
 markbot.py schedule-alert --state missing --show "Wonder Cabinet" \
     --slot "Podcast Episode" --release-time "Saturday at 6 AM" --channel C09QUBVE0DR
+
+# Ghost import lifecycle
+markbot.py ghost-import --state start --show "Wonder Cabinet" \
+    --episode "Dekila Chungyalpa on the Sacred Feminine" --channel C09QUBVE0DR
+markbot.py ghost-import --state draft --show "Wonder Cabinet" \
+    --episode "Dekila Chungyalpa..." \
+    --ghost-url "https://wonder-cabinet.ghost.io/ghost/#/editor/post/abc" \
+    --channel C --thread-ts TS
+markbot.py ghost-import --state scheduled --show "Wonder Cabinet" \
+    --episode "Dekila Chungyalpa..." \
+    --ghost-url URL --schedule-time "Saturday at 6 AM" --channel C
+markbot.py ghost-import --state failed --show "Wonder Cabinet" \
+    --episode "Dekila Chungyalpa..." \
+    --error "Validation error" --channel C
 
 # Generic posting (accepts JSON string or stdin with "-")
 markbot.py post --blocks-json '{"blocks":[...]}' --channel C09QUBVE0DR

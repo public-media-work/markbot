@@ -21,6 +21,7 @@ See [docs/SETUP.md](docs/SETUP.md) for Slack App creation and configuration.
 - **`transcribe-start`** — "Working on a transcript" notification (prints `thread_ts`)
 - **`transcribe-ready`** — "Transcript ready to edit" with Google Doc link
 - **`schedule-alert`** — Release readiness alerts (missing / drafted / scheduled)
+- **`ghost-import`** — Import lifecycle notifications (start, draft ready, scheduled, failed)
 - **`post`** — Generic Block Kit poster for custom payloads
 
 ## Use cases
