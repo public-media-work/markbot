@@ -532,6 +532,47 @@ def cmd_post(args):
     client.chat_postMessage(**kwargs)
 
 
+def cmd_ghost_import(args):
+    """Send a ghost import lifecycle notification."""
+    builders = {
+        "start": lambda: build_import_start_blocks(args.show, args.episode),
+        "draft": lambda: build_import_draft_blocks(
+            args.show, args.episode, args.ghost_url,
+        ),
+        "scheduled": lambda: build_import_scheduled_blocks(
+            args.show, args.episode, args.ghost_url, args.schedule_time,
+        ),
+        "failed": lambda: build_import_failed_blocks(
+            args.show, args.episode, args.error,
+        ),
+    }
+
+    blocks = builders[args.state]()
+
+    if args.dry_run:
+        print(json.dumps(blocks, indent=2))
+        return
+
+    client = get_slack_client()
+    state_labels = {
+        "start": f"Importing {args.episode}",
+        "draft": f"Draft ready — {args.episode}",
+        "scheduled": f"Scheduled — {args.episode}",
+        "failed": f"Import failed — {args.episode}",
+    }
+    kwargs = {
+        "channel": args.channel,
+        "blocks": blocks,
+        "text": state_labels[args.state],
+    }
+    if args.thread_ts:
+        kwargs["thread_ts"] = args.thread_ts
+    resp = client.chat_postMessage(**kwargs)
+    # Print thread_ts for start messages (callers can capture for threading)
+    if args.state == "start":
+        print(resp["ts"])
+
+
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
@@ -586,6 +627,21 @@ def main():
     p_post.add_argument("--thread-ts", help="Thread timestamp for reply")
     p_post.add_argument("--reply-broadcast", action="store_true", help="Broadcast threaded reply to channel")
 
+    # --- ghost-import ---
+    p_gi = sub.add_parser("ghost-import", help="Ghost import lifecycle notification")
+    p_gi.add_argument(
+        "--state", required=True,
+        choices=["start", "draft", "scheduled", "failed"],
+        help="Import lifecycle state",
+    )
+    p_gi.add_argument("--show", required=True, help='e.g. "Wonder Cabinet"')
+    p_gi.add_argument("--episode", required=True, help="Episode title")
+    p_gi.add_argument("--ghost-url", help="Ghost editor or public URL (for draft/scheduled)")
+    p_gi.add_argument("--schedule-time", help="Scheduled release time (for scheduled)")
+    p_gi.add_argument("--error", help="Error message (for failed)")
+    p_gi.add_argument("--channel", required=True, help="Slack channel ID")
+    p_gi.add_argument("--thread-ts", help="Thread timestamp for threading replies")
+
     args = parser.parse_args()
 
     commands = {
@@ -593,6 +649,7 @@ def main():
         "transcribe-ready": cmd_transcribe_ready,
         "schedule-alert": cmd_schedule_alert,
         "post": cmd_post,
+        "ghost-import": cmd_ghost_import,
     }
     commands[args.command](args)
 
