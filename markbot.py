@@ -317,6 +317,90 @@ def build_scheduled_blocks(
 
 
 # ---------------------------------------------------------------------------
+# Message builders — ghost import
+# ---------------------------------------------------------------------------
+
+GHOST_SITE_URL = "wondercabinetproductions.com"
+
+
+def build_import_start_blocks(show: str, episode: str) -> list[dict]:
+    """Block Kit blocks for import-started notification."""
+    return [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    f":incoming_envelope: *New episode importing* — {show}\n\n"
+                    f"*{episode}*\n"
+                    f"A new episode has been scheduled on PRX and is being "
+                    f"imported into {GHOST_SITE_URL}."
+                ),
+            },
+        },
+    ]
+
+
+def build_import_draft_blocks(show: str, episode: str, ghost_url: str) -> list[dict]:
+    """Block Kit blocks for draft-ready notification."""
+    return [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    f":pencil2: *Draft ready for review* — {show}\n\n"
+                    f"*{episode}*\n"
+                    f"The episode has been imported as a draft. "
+                    f"Review it before publishing.\n\n"
+                    f":link: <{ghost_url}|Open in Ghost>"
+                ),
+            },
+        },
+    ]
+
+
+def build_import_scheduled_blocks(
+    show: str, episode: str, ghost_url: str, schedule_time: str
+) -> list[dict]:
+    """Block Kit blocks for post-scheduled notification."""
+    return [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    f":calendar: *Episode scheduled* — {show}\n\n"
+                    f"*{episode}*\n"
+                    f"Scheduled for release: {schedule_time}\n\n"
+                    f":link: <{ghost_url}|View post>"
+                ),
+            },
+        },
+    ]
+
+
+def build_import_failed_blocks(show: str, episode: str, error: str) -> list[dict]:
+    """Block Kit blocks for import-failed notification."""
+    if len(error) > 300:
+        error = error[:297] + "..."
+    return [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    f":x: *Import failed* — {show}\n\n"
+                    f"*{episode}*\n"
+                    f"```{error}```\n"
+                    f"Check the CLI output for full details."
+                ),
+            },
+        },
+    ]
+
+
+# ---------------------------------------------------------------------------
 # Commands
 # ---------------------------------------------------------------------------
 
