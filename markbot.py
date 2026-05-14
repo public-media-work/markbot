@@ -373,7 +373,7 @@ def build_import_scheduled_blocks(
                     f":calendar: *Episode scheduled* — {show}\n\n"
                     f"*{episode}*\n"
                     f"Scheduled for release: {schedule_time}\n\n"
-                    f":link: <{ghost_url}|View post>"
+                    f":link: <{ghost_url}|Preview post>"
                 ),
             },
         },
@@ -567,10 +567,11 @@ def cmd_ghost_import(args):
     }
     if args.thread_ts:
         kwargs["thread_ts"] = args.thread_ts
+    if args.reply_broadcast:
+        kwargs["reply_broadcast"] = True
     resp = client.chat_postMessage(**kwargs)
-    # Print thread_ts for start messages (callers can capture for threading)
-    if args.state == "start":
-        print(resp["ts"])
+    # Print resp["ts"] for every state so callers can capture for later threading.
+    print(resp["ts"])
 
 
 # ---------------------------------------------------------------------------
@@ -641,6 +642,10 @@ def main():
     p_gi.add_argument("--error", help="Error message (for failed)")
     p_gi.add_argument("--channel", required=True, help="Slack channel ID")
     p_gi.add_argument("--thread-ts", help="Thread timestamp for threading replies")
+    p_gi.add_argument(
+        "--reply-broadcast", action="store_true",
+        help="When threading, also broadcast the reply to the main channel feed",
+    )
 
     args = parser.parse_args()
 
