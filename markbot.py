@@ -1,52 +1,38 @@
 #!/usr/bin/env python3
-"""Your Helpful MarkBot! — Slack bot for podcast publishing notifications.
+"""Your Helpful MarkBot! — a Slack alert hub for WPM workflows.
 
-Centralized CLI for all Slack notifications in the publishing suite.
-Posts as a single bot identity using slack-sdk (Bot Token auth).
+A single-identity CLI that posts Block Kit notifications to Slack (Bot Token
+auth). Two families of commands:
 
-Commands:
-    transcribe-start   Post "job started" notification (prints thread_ts)
-    transcribe-ready   Post "transcript ready" with Google Doc link
-    schedule-alert     Post release readiness alerts (missing/drafted/scheduled)
-    post               Post raw Block Kit JSON (for callers with custom blocks)
+  * Named alert recipes — `run-alert <name>` — pull data from other systems
+    (AirTable, …) and post a message. Designed to be fired by a cloud scheduler
+    (GitHub Actions cron / Claude scheduled routine), so nothing depends on a
+    local machine. Add a recipe by dropping a module in recipes/.
+  * Direct notification commands — transcribe-*, schedule-alert, ghost-import,
+    post — for callers that build their own message.
 
 Usage:
-    # Transcription notifications
-    markbot.py transcribe-start --episode "007 - Robert MacFarlane" --channel C09QUBVE0DR
-    markbot.py transcribe-ready --episode "007 - ..." --doc-url URL --channel C --thread-ts TS
+    # Run a scheduled alert recipe
+    markbot.py run-alert program-of-the-day --channel C0XXXX
+    markbot.py --dry-run run-alert program-of-the-day --channel C0XXXX
 
-    # Schedule alerts
-    markbot.py schedule-alert --state missing --show "Wonder Cabinet" \
-        --slot "Podcast Episode" --release-time "Saturday at 6 AM" --channel C09QUBVE0DR
+    # Generic posting (JSON string, or "-" to read stdin)
+    markbot.py post --blocks-json '{"blocks":[...]}' --channel C0XXXX
 
-    # Generic posting
-    markbot.py post --blocks-json '{"blocks":[...]}' --channel C09QUBVE0DR
-
-    # Dry run (all commands)
-    markbot.py --dry-run transcribe-start --episode "Test" --channel X
+    # --dry-run prints Block Kit JSON without posting; it works either before
+    # the subcommand or after it.
+    markbot.py --dry-run transcribe-start --episode "Test" --channel C0XXXX
 """
 
 import argparse
 import json
-import os
 import re
 import sys
 from pathlib import Path
 
-
-# ---------------------------------------------------------------------------
-# Slack client
-# ---------------------------------------------------------------------------
-
-def get_slack_client():
-    """Create Slack WebClient from SLACK_BOT_TOKEN env var."""
-    from slack_sdk import WebClient
-
-    token = os.environ.get("SLACK_BOT_TOKEN")
-    if not token:
-        print("Error: SLACK_BOT_TOKEN environment variable not set", file=sys.stderr)
-        sys.exit(1)
-    return WebClient(token=token)
+import config
+from recipes import get_recipe, recipe_names
+from slack_client import get_slack_client, post_blocks, resolve_post_channel
 
 
 # ---------------------------------------------------------------------------
@@ -320,11 +306,9 @@ def build_scheduled_blocks(
 # Message builders — ghost import
 # ---------------------------------------------------------------------------
 
-GHOST_SITE_URL = "wondercabinetproductions.com"
-
-
 def build_import_start_blocks(show: str, episode: str) -> list[dict]:
     """Block Kit blocks for import-started notification."""
+    destination = f" into {config.PODCAST_SITE_URL}" if config.PODCAST_SITE_URL else ""
     return [
         {
             "type": "section",
@@ -334,7 +318,7 @@ def build_import_start_blocks(show: str, episode: str) -> list[dict]:
                     f":incoming_envelope: *New episode importing* — {show}\n\n"
                     f"*{episode}*\n"
                     f"A new episode has been scheduled on PRX and is being "
-                    f"imported into {GHOST_SITE_URL}."
+                    f"imported{destination}."
                 ),
             },
         },
@@ -413,7 +397,8 @@ def cmd_transcribe_start(args):
         return
 
     client = get_slack_client()
-    resp = client.chat_postMessage(
+    resp = post_blocks(
+        client,
         channel=args.channel,
         blocks=blocks,
         text=f"Transcription started — {args.episode}",
@@ -447,12 +432,13 @@ def cmd_transcribe_ready(args):
 
     client = get_slack_client()
     short_name = extract_short_name(args.episode)
-    client.chat_postMessage(
+    post_blocks(
+        client,
         channel=args.channel,
-        thread_ts=args.thread_ts,
-        reply_broadcast=True,
         blocks=blocks,
         text=f"Transcript ready to edit — {short_name}",
+        thread_ts=args.thread_ts,
+        reply_broadcast=True,
     )
 
 
@@ -486,50 +472,48 @@ def cmd_schedule_alert(args):
         "drafted": "Draft Needs Scheduling",
         "scheduled": "On Track",
     }
-    client.chat_postMessage(
+    post_blocks(
+        client,
         channel=args.channel,
         blocks=blocks,
         text=f"{state_labels[args.state]} — {args.show} — {args.slot}",
     )
 
 
-def cmd_post(args):
-    """Post raw Block Kit JSON to a channel."""
-    blocks_input = args.blocks_json
-    if blocks_input == "-":
-        blocks_input = sys.stdin.read()
-
+def _parse_blocks(raw: str) -> list[dict]:
+    """Parse a blocks payload: JSON string (or '-' for stdin); {"blocks":[...]} or bare [...]."""
+    if raw == "-":
+        raw = sys.stdin.read()
     try:
-        payload = json.loads(blocks_input)
+        payload = json.loads(raw)
     except json.JSONDecodeError as e:
         print(f"Error: Invalid JSON — {e}", file=sys.stderr)
         sys.exit(1)
-
-    # Accept either {"blocks": [...]} or bare [...]
     if isinstance(payload, list):
-        blocks = payload
-    elif isinstance(payload, dict) and "blocks" in payload:
-        blocks = payload["blocks"]
-    else:
-        print('Error: JSON must be a list or {"blocks": [...]}', file=sys.stderr)
-        sys.exit(1)
+        return payload
+    if isinstance(payload, dict) and "blocks" in payload:
+        return payload["blocks"]
+    print('Error: JSON must be a list or {"blocks": [...]}', file=sys.stderr)
+    sys.exit(1)
+
+
+def cmd_post(args):
+    """Post raw Block Kit JSON to a channel."""
+    blocks = _parse_blocks(args.blocks_json)
 
     if args.dry_run:
         print(json.dumps(blocks, indent=2))
         return
 
     client = get_slack_client()
-    kwargs = {
-        "channel": args.channel,
-        "blocks": blocks,
-        "text": "Notification from Your Helpful MarkBot!",
-    }
-    if args.thread_ts:
-        kwargs["thread_ts"] = args.thread_ts
-    if args.reply_broadcast:
-        kwargs["reply_broadcast"] = True
-
-    client.chat_postMessage(**kwargs)
+    post_blocks(
+        client,
+        channel=args.channel,
+        blocks=blocks,
+        text=config.DEFAULT_POST_TEXT,
+        thread_ts=args.thread_ts,
+        reply_broadcast=args.reply_broadcast,
+    )
 
 
 def cmd_ghost_import(args):
@@ -560,17 +544,104 @@ def cmd_ghost_import(args):
         "scheduled": f"Scheduled — {args.episode}",
         "failed": f"Import failed — {args.episode}",
     }
-    kwargs = {
-        "channel": args.channel,
-        "blocks": blocks,
-        "text": state_labels[args.state],
-    }
-    if args.thread_ts:
-        kwargs["thread_ts"] = args.thread_ts
-    if args.reply_broadcast:
-        kwargs["reply_broadcast"] = True
-    resp = client.chat_postMessage(**kwargs)
+    resp = post_blocks(
+        client,
+        channel=args.channel,
+        blocks=blocks,
+        text=state_labels[args.state],
+        thread_ts=args.thread_ts,
+        reply_broadcast=args.reply_broadcast,
+    )
     # Print resp["ts"] for every state so callers can capture for later threading.
+    print(resp["ts"])
+
+
+def cmd_notify_record(args):
+    """Post to the Slack channel a record routes to (record → project → channel).
+
+    The channel is looked up from AirTable (unless --channel overrides it), then
+    the channel name is resolved to an ID and the message is posted.
+    """
+    import airtable
+
+    url = airtable.record_url(args.table, args.record)
+    if args.blocks_json:
+        blocks = _parse_blocks(args.blocks_json)
+    else:
+        headline = args.text or "New update"
+        blocks = [{
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": f"{headline}\n:card_index: <{url}|Open record in AirTable>",
+            },
+        }]
+
+    # Resolve the routing channel name from AirTable unless overridden.
+    channel_name = None
+    if not args.channel:
+        try:
+            channel_name = airtable.pick_channel(
+                airtable.channel_names_for_record(args.table, args.record)
+            )
+        except Exception as exc:  # network/credential/field issues
+            if not args.dry_run:
+                print(f"Error: could not resolve channel from AirTable — {exc}", file=sys.stderr)
+                sys.exit(1)
+            print(f"(dry-run) AirTable channel lookup skipped: {exc}", file=sys.stderr)
+
+    if args.dry_run:
+        routed = args.channel or (f"#{channel_name}" if channel_name else "(unresolved)")
+        print(f"(dry-run) would post to {routed}", file=sys.stderr)
+        print(json.dumps(blocks, indent=2))
+        return
+
+    target = args.channel or channel_name
+    if not target:
+        print(
+            "Error: no channel resolved from the record and no --channel override",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    from slack_sdk.errors import SlackApiError
+
+    client = get_slack_client()
+    try:
+        channel_id = resolve_post_channel(client, target)
+    except (RuntimeError, SlackApiError) as exc:
+        detail = exc.response.get("error", exc) if isinstance(exc, SlackApiError) else exc
+        print(f"Error: could not resolve Slack channel — {detail}", file=sys.stderr)
+        sys.exit(1)
+
+    resp = post_blocks(client, channel=channel_id, blocks=blocks, text=args.text or config.DEFAULT_POST_TEXT)
+    print(resp["ts"])
+
+
+def cmd_run_alert(args):
+    """Run a named alert recipe: build its blocks (fetching data) and post them."""
+    recipe = get_recipe(args.recipe)
+    if recipe is None:
+        print(f"Error: unknown recipe {args.recipe!r}", file=sys.stderr)
+        sys.exit(1)
+
+    blocks = recipe.build_blocks(args)
+
+    if args.dry_run:
+        print(json.dumps(blocks, indent=2))
+        return
+
+    channel = args.channel or getattr(recipe, "DEFAULT_CHANNEL", None)
+    if not channel:
+        print(
+            f"Error: no --channel provided and recipe {args.recipe!r} has no default",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    text = recipe.fallback_text(args) if hasattr(recipe, "fallback_text") else f"Alert: {args.recipe}"
+    client = get_slack_client()
+    resp = post_blocks(client, channel=channel, blocks=blocks, text=text)
     print(resp["ts"])
 
 
@@ -581,22 +652,35 @@ def cmd_ghost_import(args):
 def main():
     parser = argparse.ArgumentParser(
         prog="markbot.py",
-        description="Your Helpful MarkBot! — Slack bot for podcast publishing notifications",
+        description="Your Helpful MarkBot! — a Slack alert hub for WPM workflows",
     )
     parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Print Block Kit JSON without posting to Slack",
     )
+
+    # Lets --dry-run be given *after* the subcommand too. SUPPRESS means an
+    # omitted sub-level flag doesn't clobber the top-level value.
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument(
+        "--dry-run", action="store_true", default=argparse.SUPPRESS,
+        help="Print Block Kit JSON without posting to Slack",
+    )
+
     sub = parser.add_subparsers(dest="command", required=True)
 
     # --- transcribe-start ---
-    p_ts = sub.add_parser("transcribe-start", help="Post transcription-started message")
+    p_ts = sub.add_parser(
+        "transcribe-start", parents=[common], help="Post transcription-started message"
+    )
     p_ts.add_argument("--episode", required=True, help='e.g. "005 - Renee Bergland"')
     p_ts.add_argument("--channel", required=True, help="Slack channel ID")
 
     # --- transcribe-ready ---
-    p_tr = sub.add_parser("transcribe-ready", help="Post transcript-ready message")
+    p_tr = sub.add_parser(
+        "transcribe-ready", parents=[common], help="Post transcript-ready message"
+    )
     p_tr.add_argument("--episode", required=True, help='e.g. "005 - Renee Bergland"')
     p_tr.add_argument("--doc-url", required=True, help="Google Docs URL for transcript")
     p_tr.add_argument("--chapters-file", help="Path to chapters.md")
@@ -606,12 +690,14 @@ def main():
     p_tr.add_argument("--thread-ts", required=True, help="Thread timestamp from start message")
 
     # --- schedule-alert ---
-    p_sa = sub.add_parser("schedule-alert", help="Post release readiness alert")
+    p_sa = sub.add_parser(
+        "schedule-alert", parents=[common], help="Post release readiness alert"
+    )
     p_sa.add_argument(
         "--state", required=True, choices=["missing", "drafted", "scheduled"],
         help="Readiness state",
     )
-    p_sa.add_argument("--show", required=True, help='e.g. "Wonder Cabinet"')
+    p_sa.add_argument("--show", required=True, help='Program/show name, e.g. "Weekly Program"')
     p_sa.add_argument("--slot", required=True, help='e.g. "Podcast Episode"')
     p_sa.add_argument("--release-time", required=True, help='e.g. "Saturday, March 7 at 6:00 AM CST (12h from now)"')
     p_sa.add_argument("--title", help="Ghost post title (for drafted/scheduled)")
@@ -619,7 +705,7 @@ def main():
     p_sa.add_argument("--channel", required=True, help="Slack channel ID")
 
     # --- post ---
-    p_post = sub.add_parser("post", help="Post raw Block Kit JSON")
+    p_post = sub.add_parser("post", parents=[common], help="Post raw Block Kit JSON")
     p_post.add_argument(
         "--blocks-json", required=True,
         help='JSON string or "-" to read from stdin',
@@ -629,13 +715,15 @@ def main():
     p_post.add_argument("--reply-broadcast", action="store_true", help="Broadcast threaded reply to channel")
 
     # --- ghost-import ---
-    p_gi = sub.add_parser("ghost-import", help="Ghost import lifecycle notification")
+    p_gi = sub.add_parser(
+        "ghost-import", parents=[common], help="Ghost import lifecycle notification"
+    )
     p_gi.add_argument(
         "--state", required=True,
         choices=["start", "draft", "scheduled", "failed"],
         help="Import lifecycle state",
     )
-    p_gi.add_argument("--show", required=True, help='e.g. "Wonder Cabinet"')
+    p_gi.add_argument("--show", required=True, help='Program/show name, e.g. "Weekly Program"')
     p_gi.add_argument("--episode", required=True, help="Episode title")
     p_gi.add_argument("--ghost-url", help="Ghost editor or public URL (for draft/scheduled)")
     p_gi.add_argument("--schedule-time", help="Scheduled release time (for scheduled)")
@@ -647,7 +735,34 @@ def main():
         help="When threading, also broadcast the reply to the main channel feed",
     )
 
+    # --- notify-record ---
+    p_nr = sub.add_parser(
+        "notify-record", parents=[common],
+        help="Post to the channel an AirTable record routes to (record → project → channel)",
+    )
+    p_nr.add_argument("--record", required=True, help="AirTable record ID (rec…)")
+    p_nr.add_argument("--table", required=True, help="AirTable table ID or name the record lives in")
+    p_nr.add_argument("--text", help="Message text (used above the record link, or as fallback)")
+    p_nr.add_argument("--blocks-json", help='Custom Block Kit ("blocks":[...] or bare [...]; "-" for stdin)')
+    p_nr.add_argument("--channel", help="Override the resolved channel (ID or name)")
+
+    # --- run-alert ---  (one nested subcommand per registered recipe)
+    p_alert = sub.add_parser(
+        "run-alert", parents=[common], help="Run a named alert recipe"
+    )
+    recipe_sub = p_alert.add_subparsers(dest="recipe", required=True)
+    for name in recipe_names():
+        recipe = get_recipe(name)
+        rp = recipe_sub.add_parser(
+            name, parents=[common], help=getattr(recipe, "HELP", ""),
+        )
+        rp.add_argument("--channel", help="Slack channel ID or configured name")
+        recipe.add_arguments(rp)
+
     args = parser.parse_args()
+    # --dry-run may be absent from the namespace if never passed (SUPPRESS).
+    if not hasattr(args, "dry_run"):
+        args.dry_run = False
 
     commands = {
         "transcribe-start": cmd_transcribe_start,
@@ -655,6 +770,8 @@ def main():
         "schedule-alert": cmd_schedule_alert,
         "post": cmd_post,
         "ghost-import": cmd_ghost_import,
+        "notify-record": cmd_notify_record,
+        "run-alert": cmd_run_alert,
     }
     commands[args.command](args)
 

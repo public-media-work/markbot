@@ -1,28 +1,49 @@
-# Your Helpful MarkBot!
+# Your Helpful MarkBot
 
-Centralized Slack bot for alerts, updates and nudges. Gathers up saved items and stray conversations for other LLM-driven apps, and gives LLM applications a simple Slack notifier. 
+A single-identity Slack **alert hub** for WPM workflows. It posts scheduled,
+data-driven alerts and workflow notifications to Slack as one consistent sender,
+and gives other CLI/LLM workflows a simple Block Kit notifier. Outbound only.
 
 ## Quick Start
 
 ```bash
 pip install -r requirements.txt
-export SLACK_BOT_TOKEN=xoxb-your-token
 
-# Test with dry run (no token needed)
-python3 markbot.py --dry-run transcribe-start --episode "Test" --channel X
+# Dry run (no token or network — prints the Block Kit JSON)
+python3 markbot.py --dry-run run-alert program-of-the-day --channel C0XXXX
+
+# Live run (token via env var or the-lodge resolver — see docs/SETUP.md)
+export SLACK_BOT_TOKEN=xoxb-your-token
+python3 markbot.py run-alert program-of-the-day --channel C0XXXX
 ```
 
-## Setup
+`--dry-run` works before *or* after the subcommand.
 
-See [docs/SETUP.md](docs/SETUP.md) for Slack App creation and configuration.
+## Two kinds of commands
 
-## Commands
+**Alert recipes** — `run-alert <name>` — pull data from other systems and post a
+message. They're fired by a cloud scheduler (GitHub Actions cron or a Claude
+scheduled routine), so nothing depends on your local machine. Add one by dropping
+a module in [`recipes/`](recipes/).
 
-- **`transcribe-start`** — "Working on a transcript" notification (prints `thread_ts`)
-- **`transcribe-ready`** — "Transcript ready to edit" with Google Doc link
-- **`schedule-alert`** — Release readiness alerts (missing / drafted / scheduled)
-- **`ghost-import`** — Import lifecycle notifications (start, draft ready, scheduled, failed)
-- **`post`** — Generic Block Kit poster for custom payloads
+- **`program-of-the-day`** — links the AirTable record for each program recording
+  on a given weekday.
 
-## Use cases
-- Used as centralized alert system in the [podcast-publishing-suite](https://github.com/Wonder-Cabinet-Productions/podcast-publishing-suite).
+**Direct notifications** — for callers that build their own message:
+
+- **`post`** — generic Block Kit poster (JSON arg or `-` for stdin)
+- **`transcribe-start` / `transcribe-ready`** — transcription lifecycle (prints `thread_ts`)
+- **`schedule-alert`** — release readiness (missing / drafted / scheduled)
+- **`ghost-import`** — publishing import lifecycle (start / draft / scheduled / failed)
+
+## Docs
+
+- [docs/SETUP.md](docs/SETUP.md) — create & install the Slack app with the Slack CLI, and set the token
+- [docs/SCHEDULING.md](docs/SCHEDULING.md) — how to schedule recipes (GitHub Actions vs Claude routines)
+
+## Secrets
+
+Resolved **env var first, then the-lodge resolver** (`get-secret.sh` → registry →
+1Password) — env-first is what lets a cloud runner fire markbot with no dependence
+on your machine. Keys match the-lodge registry (`AIRTABLE_PAT`, `SLACK_BOT_TOKEN`).
+See [docs/SETUP.md](docs/SETUP.md).

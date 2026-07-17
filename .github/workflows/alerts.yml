@@ -1,0 +1,46 @@
+name: Scheduled alerts
+
+# Fires alert recipes on a cron with no dependence on a local machine.
+# markbot resolves secrets env-first, so the repo secrets below are all it needs.
+#
+# Required repo config (Settings → Secrets and variables → Actions):
+#   secrets.SLACK_BOT_TOKEN         xoxb- bot token
+#   secrets.AIRTABLE_PAT            AirTable PAT (for data-driven recipes)
+#   vars.PROGRAM_ALERTS_CHANNEL     default Slack channel ID for the cron run
+#   vars.AIRTABLE_BASE_ID           AirTable base id      } consumed by
+#   vars.AIRTABLE_TABLE             AirTable table id/name } program-of-the-day
+
+on:
+  schedule:
+    # Mondays 13:00 UTC (08:00 America/Chicago). Adjust per recipe.
+    - cron: "0 13 * * 1"
+  workflow_dispatch:
+    inputs:
+      recipe:
+        description: Recipe name
+        default: program-of-the-day
+      channel:
+        description: Slack channel ID (overrides the default)
+        required: false
+
+jobs:
+  run-alert:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - name: Run alert
+        # Pass dispatch inputs via env (never interpolate ${{ }} into run: — avoids
+        # shell-injection, even though only repo-writers can trigger a dispatch).
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          AIRTABLE_PAT: ${{ secrets.AIRTABLE_PAT }}
+          AIRTABLE_BASE_ID: ${{ vars.AIRTABLE_BASE_ID }}
+          AIRTABLE_TABLE: ${{ vars.AIRTABLE_TABLE }}
+          RECIPE: ${{ github.event.inputs.recipe || 'program-of-the-day' }}
+          CHANNEL: ${{ github.event.inputs.channel || vars.PROGRAM_ALERTS_CHANNEL }}
+        run: |
+          python markbot.py run-alert "$RECIPE" --channel "$CHANNEL"
