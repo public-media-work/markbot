@@ -625,7 +625,13 @@ def cmd_run_alert(args):
         print(f"Error: unknown recipe {args.recipe!r}", file=sys.stderr)
         sys.exit(1)
 
-    blocks = recipe.build_blocks(args)
+    # build_blocks may fetch data (network / AirTable / secret resolution); fail
+    # cleanly like the rest of the CLI rather than dumping a traceback in a cron log.
+    try:
+        blocks = recipe.build_blocks(args)
+    except Exception as exc:  # noqa: BLE001 — surface any fetch/build failure cleanly
+        print(f"Error: recipe {args.recipe!r} failed — {exc}", file=sys.stderr)
+        sys.exit(1)
 
     if args.dry_run:
         print(json.dumps(blocks, indent=2))

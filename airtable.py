@@ -18,6 +18,8 @@ import os
 
 from credentials import resolve_secret
 
+# WPM has a single "Project Management" base, so defaulting to it is intentional
+# (not a silent guess) — this tool is WPM-only. Override with AIRTABLE_BASE_ID.
 BASE_ID = os.environ.get("AIRTABLE_BASE_ID", "appZ2HGwhiifQToB6")
 SLACK_CHANNELS_TABLE = os.environ.get("AIRTABLE_SLACK_CHANNELS_TABLE", "tbluUMsElANyKl3Nc")
 
