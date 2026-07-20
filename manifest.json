@@ -1,0 +1,29 @@
+{
+  "display_information": {
+    "name": "Your Helpful MarkBot",
+    "description": "Alert hub — scheduled and workflow-driven Slack notifications",
+    "long_description": "A single-identity bot for WPM Slack workspaces. It posts scheduled, data-driven alerts and workflow notifications — transcription updates, publishing lifecycle events, and AirTable-backed program reminders — as one consistent sender so nothing gets lost in the noise. Outbound only: alert recipes are fired by a cloud scheduler, with no dependence on a local machine.",
+    "background_color": "#10a544"
+  },
+  "features": {
+    "bot_user": {
+      "display_name": "Your Helpful MarkBot",
+      "always_online": false
+    }
+  },
+  "oauth_config": {
+    "scopes": {
+      "bot": [
+        "chat:write",
+        "chat:write.public",
+        "channels:read",
+        "groups:read"
+      ]
+    }
+  },
+  "settings": {
+    "org_deploy_enabled": false,
+    "socket_mode_enabled": false,
+    "token_rotation_enabled": false
+  }
+}
